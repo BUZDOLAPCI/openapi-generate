@@ -3,6 +3,9 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprot
 import { openapiParse, generateToolSchemas, generateServerScaffold } from './tools/index.js';
 import type { ParsedOpenAPISpec, ScaffoldOptions } from './types.js';
 
+// Re-export createStandaloneServer from transport for convenience
+export { createStandaloneServer } from './transport/http.js';
+
 /**
  * Create the MCP server with all tools registered
  */

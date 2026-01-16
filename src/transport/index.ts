@@ -1,2 +1,2 @@
 export { startStdioTransport } from './stdio.js';
-export { startHttpTransport } from './http.js';
+export { startHttpTransport, createStandaloneServer } from './http.js';
