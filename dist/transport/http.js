@@ -1,113 +1,408 @@
 import { createServer } from 'http';
-import { randomUUID } from 'crypto';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { openapiParse, generateToolSchemas, generateServerScaffold } from '../tools/index.js';
 /**
- * Session storage for HTTP transport
+ * Tool definitions for the openapi-generate MCP server
  */
-const sessions = new Map();
+const toolDefinitions = [
+    {
+        name: 'openapi_parse',
+        description: 'Parse an OpenAPI spec from URL or JSON string. Returns structured representation of endpoints, parameters, schemas.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                spec_url_or_json: {
+                    type: 'string',
+                    description: 'URL to OpenAPI spec or raw JSON string of the spec',
+                },
+            },
+            required: ['spec_url_or_json'],
+        },
+    },
+    {
+        name: 'generate_tool_schemas',
+        description: 'Generate MCP tool definitions from parsed OpenAPI spec',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                parsed_spec: {
+                    type: 'object',
+                    description: 'Parsed OpenAPI spec from openapi_parse tool',
+                },
+            },
+            required: ['parsed_spec'],
+        },
+    },
+    {
+        name: 'generate_server_scaffold',
+        description: 'Generate a complete MCP server scaffold following Dedalus conventions',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                parsed_spec: {
+                    type: 'object',
+                    description: 'Parsed OpenAPI spec from openapi_parse tool',
+                },
+                language: {
+                    type: 'string',
+                    enum: ['typescript', 'python'],
+                    description: 'Target language for the generated server',
+                },
+                options: {
+                    type: 'object',
+                    description: 'Optional scaffold generation options',
+                    properties: {
+                        server_name: {
+                            type: 'string',
+                            description: 'Name for the generated server',
+                        },
+                        server_version: {
+                            type: 'string',
+                            description: 'Version for the generated server',
+                        },
+                        author: {
+                            type: 'string',
+                            description: 'Author name',
+                        },
+                        include_tests: {
+                            type: 'boolean',
+                            description: 'Whether to include test files',
+                        },
+                        base_url: {
+                            type: 'string',
+                            description: 'Base URL for API calls',
+                        },
+                    },
+                },
+            },
+            required: ['parsed_spec', 'language'],
+        },
+    },
+];
 /**
- * Create a standalone MCP server for use with HTTP transport
- * This is exported so external code can create servers independently
+ * Handle a single JSON-RPC request
  */
-export function createStandaloneServer(mcpServer, _config) {
-    const sessionId = randomUUID();
-    const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => sessionId,
-    });
-    sessions.set(sessionId, { transport, server: mcpServer });
-    return { transport, sessionId };
+async function handleJsonRpcRequest(request) {
+    const { id, method, params } = request;
+    try {
+        switch (method) {
+            case 'initialize': {
+                return {
+                    jsonrpc: '2.0',
+                    id,
+                    result: {
+                        protocolVersion: '2024-11-05',
+                        capabilities: {
+                            tools: {},
+                        },
+                        serverInfo: {
+                            name: 'openapi-generate',
+                            version: '1.0.0',
+                        },
+                    },
+                };
+            }
+            case 'tools/list': {
+                return {
+                    jsonrpc: '2.0',
+                    id,
+                    result: {
+                        tools: toolDefinitions,
+                    },
+                };
+            }
+            case 'tools/call': {
+                const toolName = params?.name;
+                const args = params?.arguments;
+                let result;
+                switch (toolName) {
+                    case 'openapi_parse': {
+                        const specUrlOrJson = args?.spec_url_or_json;
+                        if (!specUrlOrJson) {
+                            return {
+                                jsonrpc: '2.0',
+                                id,
+                                result: {
+                                    content: [
+                                        {
+                                            type: 'text',
+                                            text: JSON.stringify({
+                                                ok: false,
+                                                error: {
+                                                    code: 'INVALID_INPUT',
+                                                    message: 'spec_url_or_json is required',
+                                                    details: {},
+                                                },
+                                                meta: { retrieved_at: new Date().toISOString() },
+                                            }, null, 2),
+                                        },
+                                    ],
+                                },
+                            };
+                        }
+                        result = await openapiParse(specUrlOrJson);
+                        break;
+                    }
+                    case 'generate_tool_schemas': {
+                        const parsedSpec = args?.parsed_spec;
+                        if (!parsedSpec) {
+                            return {
+                                jsonrpc: '2.0',
+                                id,
+                                result: {
+                                    content: [
+                                        {
+                                            type: 'text',
+                                            text: JSON.stringify({
+                                                ok: false,
+                                                error: {
+                                                    code: 'INVALID_INPUT',
+                                                    message: 'parsed_spec is required',
+                                                    details: {},
+                                                },
+                                                meta: { retrieved_at: new Date().toISOString() },
+                                            }, null, 2),
+                                        },
+                                    ],
+                                },
+                            };
+                        }
+                        result = generateToolSchemas(parsedSpec);
+                        break;
+                    }
+                    case 'generate_server_scaffold': {
+                        const { parsed_spec: parsedSpec, language, options } = args;
+                        if (!parsedSpec) {
+                            return {
+                                jsonrpc: '2.0',
+                                id,
+                                result: {
+                                    content: [
+                                        {
+                                            type: 'text',
+                                            text: JSON.stringify({
+                                                ok: false,
+                                                error: {
+                                                    code: 'INVALID_INPUT',
+                                                    message: 'parsed_spec is required',
+                                                    details: {},
+                                                },
+                                                meta: { retrieved_at: new Date().toISOString() },
+                                            }, null, 2),
+                                        },
+                                    ],
+                                },
+                            };
+                        }
+                        if (!language || !['typescript', 'python'].includes(language)) {
+                            return {
+                                jsonrpc: '2.0',
+                                id,
+                                result: {
+                                    content: [
+                                        {
+                                            type: 'text',
+                                            text: JSON.stringify({
+                                                ok: false,
+                                                error: {
+                                                    code: 'INVALID_INPUT',
+                                                    message: 'language must be "typescript" or "python"',
+                                                    details: {},
+                                                },
+                                                meta: { retrieved_at: new Date().toISOString() },
+                                            }, null, 2),
+                                        },
+                                    ],
+                                },
+                            };
+                        }
+                        result = generateServerScaffold(parsedSpec, language, options);
+                        break;
+                    }
+                    default:
+                        return {
+                            jsonrpc: '2.0',
+                            id,
+                            error: {
+                                code: -32601,
+                                message: `Unknown tool: ${toolName}`,
+                            },
+                        };
+                }
+                return {
+                    jsonrpc: '2.0',
+                    id,
+                    result: {
+                        content: [
+                            {
+                                type: 'text',
+                                text: JSON.stringify(result, null, 2),
+                            },
+                        ],
+                    },
+                };
+            }
+            default:
+                return {
+                    jsonrpc: '2.0',
+                    id,
+                    error: {
+                        code: -32601,
+                        message: `Method not found: ${method}`,
+                    },
+                };
+        }
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return {
+            jsonrpc: '2.0',
+            id,
+            error: {
+                code: -32603,
+                message: `Internal error: ${message}`,
+            },
+        };
+    }
 }
 /**
- * Handle MCP requests on /mcp endpoint
+ * Read the request body as a string
  */
-async function handleMcpRequest(req, res, mcpServer, _config) {
-    // Only allow POST requests for MCP
-    if (req.method !== 'POST') {
-        res.writeHead(405, { 'Content-Type': 'application/json', 'Allow': 'POST' });
-        res.end(JSON.stringify({ error: 'Method not allowed' }));
-        return;
-    }
-    // Get or create session
-    let sessionId = req.headers['mcp-session-id'];
-    let session = sessionId ? sessions.get(sessionId) : undefined;
-    if (!session) {
-        // Create new session
-        const transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: () => randomUUID(),
-        });
-        sessionId = randomUUID();
-        session = { transport, server: mcpServer };
-        sessions.set(sessionId, session);
-        // Connect the server to the transport
-        await mcpServer.connect(session.transport);
-    }
-    // Handle the request with raw Node.js request/response objects
-    await session.transport.handleRequest(req, res);
+function readBody(req) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        req.on('data', (chunk) => chunks.push(chunk));
+        req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+        req.on('error', reject);
+    });
+}
+/**
+ * Send a JSON response
+ */
+function sendJson(res, statusCode, data) {
+    const body = JSON.stringify(data);
+    res.writeHead(statusCode, {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(body),
+    });
+    res.end(body);
 }
 /**
  * Handle health check endpoint
  */
 function handleHealthCheck(res, config) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
+    sendJson(res, 200, {
         status: 'ok',
         server: config.name,
         version: config.version,
         timestamp: new Date().toISOString(),
-    }));
+    });
 }
 /**
  * Handle info endpoint
  */
 function handleInfo(res, config) {
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({
+    sendJson(res, 200, {
         name: config.name,
         version: config.version,
         capabilities: {
             tools: true,
         },
-    }));
+    });
 }
 /**
- * Handle 404 not found
+ * Handle not found
  */
 function handleNotFound(res) {
-    res.writeHead(404, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Not found' }));
+    sendJson(res, 404, { error: 'Not found' });
 }
 /**
- * Start the MCP server with HTTP transport using raw Node.js HTTP
+ * Handle method not allowed
  */
-export async function startHttpTransport(server, config) {
-    const port = config.port || 3000;
-    const host = config.host || '127.0.0.1';
+function handleMethodNotAllowed(res) {
+    sendJson(res, 405, { error: 'Method not allowed' });
+}
+/**
+ * Handle MCP JSON-RPC endpoint
+ */
+async function handleMcpRequest(req, res) {
+    try {
+        const body = await readBody(req);
+        const request = JSON.parse(body);
+        if (!request.jsonrpc || request.jsonrpc !== '2.0') {
+            sendJson(res, 400, {
+                jsonrpc: '2.0',
+                id: request.id || 0,
+                error: {
+                    code: -32600,
+                    message: 'Invalid Request: missing or invalid jsonrpc version',
+                },
+            });
+            return;
+        }
+        const response = await handleJsonRpcRequest(request);
+        sendJson(res, 200, response);
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        sendJson(res, 500, {
+            ok: false,
+            error: message,
+        });
+    }
+}
+/**
+ * Create and configure the HTTP server
+ */
+export function createHttpServer(config) {
     const httpServer = createServer();
     httpServer.on('request', async (req, res) => {
-        const url = new URL(req.url || '/', `http://${req.headers.host || `${host}:${port}`}`);
+        const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+        const method = req.method?.toUpperCase();
         try {
             switch (url.pathname) {
                 case '/mcp':
-                    await handleMcpRequest(req, res, server, config);
+                    if (method === 'POST') {
+                        await handleMcpRequest(req, res);
+                    }
+                    else {
+                        handleMethodNotAllowed(res);
+                    }
                     break;
                 case '/health':
-                    handleHealthCheck(res, config);
+                    if (method === 'GET') {
+                        handleHealthCheck(res, config);
+                    }
+                    else {
+                        handleMethodNotAllowed(res);
+                    }
                     break;
                 case '/info':
-                    handleInfo(res, config);
+                    if (method === 'GET') {
+                        handleInfo(res, config);
+                    }
+                    else {
+                        handleMethodNotAllowed(res);
+                    }
                     break;
                 default:
                     handleNotFound(res);
             }
         }
         catch (error) {
-            console.error('Error handling request:', error);
-            if (!res.headersSent) {
-                res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Internal server error' }));
-            }
+            console.error('Server error:', error);
+            const message = error instanceof Error ? error.message : 'Internal server error';
+            sendJson(res, 500, { ok: false, error: message });
         }
     });
+    return httpServer;
+}
+/**
+ * Start the HTTP transport
+ */
+export function startHttpTransport(config) {
+    const port = config.port || 3000;
+    const host = config.host || '127.0.0.1';
+    const httpServer = createHttpServer(config);
     httpServer.listen(port, host, () => {
         console.error(`openapi-generate MCP server running on http://${host}:${port}`);
         console.error('Endpoints:');
@@ -115,5 +410,6 @@ export async function startHttpTransport(server, config) {
         console.error(`  - GET /health - Health check`);
         console.error(`  - GET /info - Server info`);
     });
+    return httpServer;
 }
 //# sourceMappingURL=http.js.map

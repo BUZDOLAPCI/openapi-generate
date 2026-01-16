@@ -1,16 +1,11 @@
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { Server } from 'http';
 import type { ServerConfig } from '../types.js';
 /**
- * Create a standalone MCP server for use with HTTP transport
- * This is exported so external code can create servers independently
+ * Create and configure the HTTP server
  */
-export declare function createStandaloneServer(mcpServer: Server, _config: ServerConfig): {
-    transport: StreamableHTTPServerTransport;
-    sessionId: string;
-};
+export declare function createHttpServer(config: ServerConfig): Server;
 /**
- * Start the MCP server with HTTP transport using raw Node.js HTTP
+ * Start the HTTP transport
  */
-export declare function startHttpTransport(server: Server, config: ServerConfig): Promise<void>;
+export declare function startHttpTransport(config: ServerConfig): Server;
 //# sourceMappingURL=http.d.ts.map

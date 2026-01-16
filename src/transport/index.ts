@@ -1,1 +1,1 @@
-export { startHttpTransport, createStandaloneServer } from './http.js';
+export { startHttpTransport, createHttpServer } from './http.js';

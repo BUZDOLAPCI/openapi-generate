@@ -6,24 +6,21 @@
  *
  * This server uses HTTP transport only (port 8080 by default).
  * Required for Dedalus platform deployment.
+ *
+ * Uses stateless JSON-RPC handling for MCP protocol compatibility.
  */
-import { createServer } from './server.js';
 import { startHttpTransport } from './transport/http.js';
 const SERVER_NAME = 'openapi-generate';
 const SERVER_VERSION = '1.0.0';
 const PORT = 8080;
 const HOST = '0.0.0.0';
-async function main() {
-    const server = createServer(SERVER_NAME, SERVER_VERSION);
-    await startHttpTransport(server, {
+function main() {
+    startHttpTransport({
         name: SERVER_NAME,
         version: SERVER_VERSION,
         port: PORT,
         host: HOST,
     });
 }
-main().catch((error) => {
-    console.error('Fatal error:', error);
-    process.exit(1);
-});
+main();
 //# sourceMappingURL=index.js.map

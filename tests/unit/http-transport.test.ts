@@ -1,60 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createServer as createHttpServer, Server as HttpServer, IncomingMessage, ServerResponse } from 'http';
-import { randomUUID } from 'crypto';
-import { createServer } from '../../src/server.js';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { Server as HttpServer } from 'http';
+import { createHttpServer } from '../../src/transport/http.js';
 
 /**
  * Test suite for HTTP transport and /mcp endpoint
  *
  * These tests verify that the MCP server correctly handles
- * JSON-RPC requests over HTTP on the /mcp endpoint.
+ * stateless JSON-RPC requests over HTTP on the /mcp endpoint.
  */
-
-// Session storage for test server
-const sessions = new Map<string, { transport: StreamableHTTPServerTransport; server: Server }>();
-
-// Create a test HTTP server
-function createTestServer(port: number): Promise<HttpServer> {
-  return new Promise((resolve) => {
-    const httpServer = createHttpServer();
-
-    httpServer.on('request', async (req: IncomingMessage, res: ServerResponse) => {
-      const url = new URL(req.url || '/', `http://localhost:${port}`);
-
-      if (url.pathname === '/mcp' && req.method === 'POST') {
-        // Get or create session
-        let sessionId = req.headers['mcp-session-id'] as string | undefined;
-        let session = sessionId ? sessions.get(sessionId) : undefined;
-
-        if (!session) {
-          sessionId = randomUUID();
-          const transport = new StreamableHTTPServerTransport({
-            sessionIdGenerator: () => sessionId!,
-          });
-          const mcpServer = createServer('test-server', '1.0.0');
-          session = { transport, server: mcpServer };
-          sessions.set(sessionId, session);
-
-          await mcpServer.connect(session.transport);
-        }
-
-        await session.transport.handleRequest(req, res);
-      } else if (url.pathname === '/health' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok' }));
-      } else {
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found' }));
-      }
-    });
-
-    httpServer.listen(port, '127.0.0.1', () => {
-      resolve(httpServer);
-    });
-  });
-}
 
 // Helper to make HTTP requests
 async function httpRequest(
@@ -70,7 +23,7 @@ async function httpRequest(
     method,
     headers: {
       'Content-Type': 'application/json',
-      Accept: 'application/json, text/event-stream',
+      Accept: 'application/json',
       ...headers,
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -90,13 +43,12 @@ async function httpRequest(
   };
 }
 
-// Helper to send MCP request with proper initialization
+// Helper to send MCP JSON-RPC request
 async function sendMcpRequest(
   port: number,
   method: string,
-  params: Record<string, unknown> = {},
-  sessionId?: string
-): Promise<{ status: number; body: string; sessionId?: string }> {
+  params: Record<string, unknown> = {}
+): Promise<{ status: number; body: unknown }> {
   const jsonRpcRequest = {
     jsonrpc: '2.0',
     id: Math.floor(Math.random() * 10000),
@@ -104,154 +56,100 @@ async function sendMcpRequest(
     params,
   };
 
-  const response = await httpRequest(port, 'POST', '/mcp', jsonRpcRequest, sessionId ? { 'mcp-session-id': sessionId } : {});
+  const response = await httpRequest(port, 'POST', '/mcp', jsonRpcRequest);
   return {
     status: response.status,
-    body: response.body,
-    sessionId: response.headers['mcp-session-id'],
+    body: JSON.parse(response.body),
   };
 }
 
-describe('HTTP Transport - /mcp endpoint', () => {
+describe('HTTP Transport - /mcp endpoint (stateless)', () => {
   let server: HttpServer;
   const TEST_PORT = 18765;
 
   beforeAll(async () => {
-    server = await createTestServer(TEST_PORT);
+    server = createHttpServer({
+      name: 'test-server',
+      version: '1.0.0',
+      port: TEST_PORT,
+      host: '127.0.0.1',
+    });
+
+    await new Promise<void>((resolve) => {
+      server.listen(TEST_PORT, '127.0.0.1', () => resolve());
+    });
   });
 
   afterAll(async () => {
-    sessions.clear();
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });
   });
 
-  it('should return 404 for non-POST requests to /mcp', async () => {
+  it('should return 405 for non-POST requests to /mcp', async () => {
     const response = await httpRequest(TEST_PORT, 'GET', '/mcp');
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(405);
   });
 
-  it('should accept POST requests to /mcp endpoint', async () => {
-    // First need to initialize per MCP protocol
-    const initRequest = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: {
-          name: 'test-client',
-          version: '1.0.0',
-        },
+  it('should handle initialize request (stateless)', async () => {
+    const response = await sendMcpRequest(TEST_PORT, 'initialize', {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: {
+        name: 'test-client',
+        version: '1.0.0',
       },
-    };
-
-    const response = await httpRequest(TEST_PORT, 'POST', '/mcp', initRequest);
-    // Should get a response (200 for SSE, or other valid status)
-    expect([200, 202]).toContain(response.status);
-  });
-
-  it('should handle initialization and tools/list request', async () => {
-    // Initialize first
-    const initRequest = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: {
-          name: 'test-client',
-          version: '1.0.0',
-        },
-      },
-    };
-
-    const initResponse = await httpRequest(TEST_PORT, 'POST', '/mcp', initRequest);
-    const sessionId = initResponse.headers['mcp-session-id'];
-
-    // Now request tools list with session
-    const toolsRequest = {
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/list',
-      params: {},
-    };
-
-    const response = await httpRequest(TEST_PORT, 'POST', '/mcp', toolsRequest, sessionId ? { 'mcp-session-id': sessionId } : {});
+    });
 
     expect(response.status).toBe(200);
+    const body = response.body as { jsonrpc: string; id: number; result: { protocolVersion: string; capabilities: object; serverInfo: { name: string; version: string } } };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.result).toBeDefined();
+    expect(body.result.protocolVersion).toBe('2024-11-05');
+    expect(body.result.serverInfo.name).toBe('openapi-generate');
+  });
 
-    // Parse SSE response - look for the data line
-    const lines = response.body.split('\n');
-    const dataLine = lines.find((line) => line.startsWith('data:'));
+  it('should handle tools/list request without session', async () => {
+    const response = await sendMcpRequest(TEST_PORT, 'tools/list', {});
 
-    expect(dataLine).toBeDefined();
+    expect(response.status).toBe(200);
+    const body = response.body as { jsonrpc: string; id: number; result: { tools: Array<{ name: string }> } };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.result).toBeDefined();
+    expect(body.result.tools).toBeDefined();
+    expect(Array.isArray(body.result.tools)).toBe(true);
 
-    if (dataLine) {
-      const jsonData = JSON.parse(dataLine.replace('data:', '').trim());
-
-      expect(jsonData.jsonrpc).toBe('2.0');
-      expect(jsonData.result).toBeDefined();
-      expect(jsonData.result.tools).toBeDefined();
-      expect(Array.isArray(jsonData.result.tools)).toBe(true);
-
-      // Verify expected tools are present
-      const toolNames = jsonData.result.tools.map((t: { name: string }) => t.name);
-      expect(toolNames).toContain('openapi_parse');
-      expect(toolNames).toContain('generate_tool_schemas');
-      expect(toolNames).toContain('generate_server_scaffold');
-    }
+    // Verify expected tools are present
+    const toolNames = body.result.tools.map((t) => t.name);
+    expect(toolNames).toContain('openapi_parse');
+    expect(toolNames).toContain('generate_tool_schemas');
+    expect(toolNames).toContain('generate_server_scaffold');
   });
 
   it('should return proper tool schema for openapi_parse', async () => {
-    // Initialize first
-    const initRequest = {
-      jsonrpc: '2.0',
-      id: 1,
-      method: 'initialize',
-      params: {
-        protocolVersion: '2024-11-05',
-        capabilities: {},
-        clientInfo: {
-          name: 'test-client',
-          version: '1.0.0',
-        },
-      },
-    };
-
-    const initResponse = await httpRequest(TEST_PORT, 'POST', '/mcp', initRequest);
-    const sessionId = initResponse.headers['mcp-session-id'];
-
-    const toolsRequest = {
-      jsonrpc: '2.0',
-      id: 2,
-      method: 'tools/list',
-      params: {},
-    };
-
-    const response = await httpRequest(TEST_PORT, 'POST', '/mcp', toolsRequest, sessionId ? { 'mcp-session-id': sessionId } : {});
+    const response = await sendMcpRequest(TEST_PORT, 'tools/list', {});
 
     expect(response.status).toBe(200);
+    const body = response.body as { result: { tools: Array<{ name: string; description: string; inputSchema: { type: string; properties: Record<string, unknown>; required: string[] } }> } };
+    const openapiParseTool = body.result.tools.find((t) => t.name === 'openapi_parse');
 
-    const lines = response.body.split('\n');
-    const dataLine = lines.find((line) => line.startsWith('data:'));
+    expect(openapiParseTool).toBeDefined();
+    expect(openapiParseTool!.description).toContain('Parse an OpenAPI spec');
+    expect(openapiParseTool!.inputSchema).toBeDefined();
+    expect(openapiParseTool!.inputSchema.type).toBe('object');
+    expect(openapiParseTool!.inputSchema.properties).toHaveProperty('spec_url_or_json');
+    expect(openapiParseTool!.inputSchema.required).toContain('spec_url_or_json');
+  });
 
-    if (dataLine) {
-      const jsonData = JSON.parse(dataLine.replace('data:', '').trim());
-      const openapiParseTool = jsonData.result.tools.find(
-        (t: { name: string }) => t.name === 'openapi_parse'
-      );
+  it('should handle unknown method gracefully', async () => {
+    const response = await sendMcpRequest(TEST_PORT, 'unknown/method', {});
 
-      expect(openapiParseTool).toBeDefined();
-      expect(openapiParseTool.description).toContain('Parse an OpenAPI spec');
-      expect(openapiParseTool.inputSchema).toBeDefined();
-      expect(openapiParseTool.inputSchema.type).toBe('object');
-      expect(openapiParseTool.inputSchema.properties).toHaveProperty('spec_url_or_json');
-      expect(openapiParseTool.inputSchema.required).toContain('spec_url_or_json');
-    }
+    expect(response.status).toBe(200);
+    const body = response.body as { jsonrpc: string; error: { code: number; message: string } };
+    expect(body.jsonrpc).toBe('2.0');
+    expect(body.error).toBeDefined();
+    expect(body.error.code).toBe(-32601);
+    expect(body.error.message).toContain('Method not found');
   });
 
   it('should handle health check endpoint', async () => {
@@ -261,6 +159,18 @@ describe('HTTP Transport - /mcp endpoint', () => {
 
     const body = JSON.parse(response.body);
     expect(body.status).toBe('ok');
+    expect(body.server).toBe('test-server');
+  });
+
+  it('should handle info endpoint', async () => {
+    const response = await httpRequest(TEST_PORT, 'GET', '/info');
+
+    expect(response.status).toBe(200);
+
+    const body = JSON.parse(response.body);
+    expect(body.name).toBe('test-server');
+    expect(body.version).toBe('1.0.0');
+    expect(body.capabilities).toHaveProperty('tools');
   });
 
   it('should return 404 for unknown endpoints', async () => {
@@ -271,19 +181,30 @@ describe('HTTP Transport - /mcp endpoint', () => {
     const body = JSON.parse(response.body);
     expect(body.error).toBe('Not found');
   });
+
+  it('should reject invalid JSON-RPC version', async () => {
+    const response = await httpRequest(TEST_PORT, 'POST', '/mcp', {
+      jsonrpc: '1.0',
+      id: 1,
+      method: 'tools/list',
+    });
+
+    expect(response.status).toBe(400);
+    const body = JSON.parse(response.body);
+    expect(body.error.code).toBe(-32600);
+    expect(body.error.message).toContain('invalid jsonrpc version');
+  });
 });
 
 describe('HTTP Transport - Server Creation', () => {
-  it('should create server without stdio transport', () => {
-    const server = createServer('test', '1.0.0');
-    expect(server).toBeDefined();
-  });
-
-  it('should export only HTTP-related functions from transport', async () => {
+  it('should export HTTP-related functions from transport', async () => {
     const transport = await import('../../src/transport/index.js');
 
     expect(transport.startHttpTransport).toBeDefined();
-    expect(transport.createStandaloneServer).toBeDefined();
+    expect(transport.createHttpServer).toBeDefined();
+
+    // createStandaloneServer should NOT be exported (removed in stateless refactor)
+    expect((transport as Record<string, unknown>).createStandaloneServer).toBeUndefined();
 
     // stdio should NOT be exported
     expect((transport as Record<string, unknown>).startStdioTransport).toBeUndefined();

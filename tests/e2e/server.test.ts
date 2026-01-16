@@ -1,24 +1,33 @@
 import { describe, it, expect } from 'vitest';
-import { createServer } from '../../src/server.js';
+import { createHttpServer, startHttpTransport } from '../../src/server.js';
 
 describe('MCP Server E2E', () => {
   describe('Server Creation', () => {
-    it('should create a server instance with default name and version', () => {
-      const server = createServer();
+    it('should create an HTTP server instance with config', () => {
+      const server = createHttpServer({
+        name: 'test-server',
+        version: '1.0.0',
+      });
       expect(server).toBeDefined();
+      // Clean up - don't leave server listening
     });
 
-    it('should create a server instance with custom name and version', () => {
-      const server = createServer('custom-server', '2.0.0');
+    it('should create an HTTP server with custom name and version', () => {
+      const server = createHttpServer({
+        name: 'custom-server',
+        version: '2.0.0',
+      });
       expect(server).toBeDefined();
     });
   });
 
   describe('Server Configuration', () => {
-    it('should have tools capability', () => {
-      const server = createServer();
-      // The server should be configured with tools capability
-      expect(server).toBeDefined();
+    it('should export both createHttpServer and startHttpTransport', () => {
+      // The server module should export both functions
+      expect(createHttpServer).toBeDefined();
+      expect(typeof createHttpServer).toBe('function');
+      expect(startHttpTransport).toBeDefined();
+      expect(typeof startHttpTransport).toBe('function');
     });
   });
 });
