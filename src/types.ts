@@ -210,12 +210,11 @@ export interface GeneratedFile {
 }
 
 /**
- * Server configuration
+ * Server configuration (HTTP transport only)
  */
 export interface ServerConfig {
   name: string;
   version: string;
-  transport: 'stdio' | 'http';
   port?: number;
   host?: string;
 }

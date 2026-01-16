@@ -85,7 +85,6 @@ function handleInfo(res: ServerResponse, config: ServerConfig): void {
   res.end(JSON.stringify({
     name: config.name,
     version: config.version,
-    transport: 'http',
     capabilities: {
       tools: true,
     },

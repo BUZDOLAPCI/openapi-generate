@@ -64,7 +64,6 @@ function handleInfo(res, config) {
     res.end(JSON.stringify({
         name: config.name,
         version: config.version,
-        transport: 'http',
         capabilities: {
             tools: true,
         },
