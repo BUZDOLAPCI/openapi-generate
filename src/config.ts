@@ -6,8 +6,8 @@ import type { ServerConfig } from './types.js';
 const DEFAULT_CONFIG: ServerConfig = {
   name: 'openapi-generate',
   version: '1.0.0',
-  transport: 'stdio',
-  port: 3000,
+  transport: 'http',
+  port: 8080,
   host: '127.0.0.1',
 };
 

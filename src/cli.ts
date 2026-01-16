@@ -14,7 +14,7 @@ export interface CliArgs {
  */
 export function parseArgs(args: string[]): CliArgs {
   const result: CliArgs = {
-    transport: 'stdio',
+    transport: 'http',
   };
 
   for (let i = 0; i < args.length; i++) {
@@ -29,6 +29,11 @@ export function parseArgs(args: string[]): CliArgs {
         } else {
           console.error(`Invalid transport: ${value}. Must be 'stdio' or 'http'.`);
         }
+        break;
+      }
+
+      case '--stdio': {
+        result.transport = 'stdio';
         break;
       }
 
@@ -82,8 +87,9 @@ USAGE:
   openapi-generate [OPTIONS]
 
 OPTIONS:
-  -t, --transport <type>   Transport type: 'stdio' (default) or 'http'
-  -p, --port <number>      Port for HTTP transport (default: 3000)
+  -t, --transport <type>   Transport type: 'http' (default) or 'stdio'
+  --stdio                  Use STDIO transport (shorthand for --transport stdio)
+  -p, --port <number>      Port for HTTP transport (default: 8080)
   -H, --host <host>        Host for HTTP transport (default: 127.0.0.1)
   -h, --help               Show this help message
   -v, --version            Show version information
@@ -96,14 +102,17 @@ ENVIRONMENT VARIABLES:
   MCP_SERVER_VERSION      Server version override
 
 EXAMPLES:
-  # Run with STDIO transport (default)
+  # Run with HTTP transport (default)
   openapi-generate
 
-  # Run with HTTP transport
-  openapi-generate --transport http --port 8080
+  # Run with HTTP transport on custom port
+  openapi-generate --port 3000
+
+  # Run with STDIO transport
+  openapi-generate --stdio
 
   # Using environment variables
-  MCP_TRANSPORT=http MCP_PORT=8080 openapi-generate
+  MCP_TRANSPORT=stdio openapi-generate
 `);
 }
 
