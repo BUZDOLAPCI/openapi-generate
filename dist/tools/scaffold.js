@@ -163,11 +163,6 @@ export default defineConfig({
         path: 'src/tools/index.ts',
         content: generateToolsIndexFile(toolNames),
     });
-    // src/transport/stdio.ts
-    files.push({
-        path: 'src/transport/stdio.ts',
-        content: generateStdioTransportFile(),
-    });
     // src/transport/http.ts
     files.push({
         path: 'src/transport/http.ts',
@@ -176,8 +171,7 @@ export default defineConfig({
     // src/transport/index.ts
     files.push({
         path: 'src/transport/index.ts',
-        content: `export { startStdioTransport } from './stdio.js';
-export { startHttpTransport } from './http.js';
+        content: `export { startHttpTransport } from './http.js';
 `,
     });
     // src/server.ts
@@ -198,10 +192,9 @@ export { startHttpTransport } from './http.js';
     // .env.example
     files.push({
         path: '.env.example',
-        content: `# MCP Server Configuration
-MCP_TRANSPORT=stdio
-MCP_PORT=3000
-MCP_HOST=127.0.0.1
+        content: `# MCP Server Configuration (HTTP-only)
+MCP_PORT=8080
+MCP_HOST=0.0.0.0
 
 # API Configuration
 API_BASE_URL=${config.baseUrl}
@@ -315,10 +308,9 @@ packages = ["src/${config.serverName.replace(/-/g, '_')}"]
     // .env.example
     files.push({
         path: '.env.example',
-        content: `# MCP Server Configuration
-MCP_TRANSPORT=stdio
-MCP_PORT=3000
-MCP_HOST=127.0.0.1
+        content: `# MCP Server Configuration (HTTP-only)
+MCP_PORT=8080
+MCP_HOST=0.0.0.0
 
 # API Configuration
 API_BASE_URL=${config.baseUrl}
@@ -405,7 +397,6 @@ export type ErrorCode =
 export interface ServerConfig {
   name: string;
   version: string;
-  transport: 'stdio' | 'http';
   port?: number;
   host?: string;
 }
@@ -453,18 +444,14 @@ function generateConfigFile(serverName, serverVersion) {
 const DEFAULT_CONFIG: ServerConfig = {
   name: '${serverName}',
   version: '${serverVersion}',
-  transport: 'stdio',
-  port: 3000,
-  host: '127.0.0.1',
+  port: 8080,
+  host: '0.0.0.0',
 };
 
 export function loadConfig(): ServerConfig {
-  const transport = (process.env.MCP_TRANSPORT as 'stdio' | 'http') || DEFAULT_CONFIG.transport;
-
   return {
     name: process.env.MCP_SERVER_NAME || DEFAULT_CONFIG.name,
     version: process.env.MCP_SERVER_VERSION || DEFAULT_CONFIG.version,
-    transport,
     port: process.env.MCP_PORT ? parseInt(process.env.MCP_PORT, 10) : DEFAULT_CONFIG.port,
     host: process.env.MCP_HOST || DEFAULT_CONFIG.host,
   };
@@ -525,17 +512,6 @@ export async function ${toCamelCase(tool.name)}(
 function generateToolsIndexFile(toolNames) {
     const imports = toolNames.map((name) => `export { ${toCamelCase(name)} } from './${name}.js';`);
     return imports.join('\n') + '\n';
-}
-function generateStdioTransportFile() {
-    return `import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
-
-export async function startStdioTransport(server: Server): Promise<void> {
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  console.error('MCP server running on stdio');
-}
-`;
 }
 function generateHttpTransportFile() {
     return `import express from 'express';
@@ -616,25 +592,17 @@ ${toolNames
 }
 function generateCliFile() {
     return `export interface CliArgs {
-  transport: 'stdio' | 'http';
   port?: number;
   host?: string;
 }
 
 export function parseArgs(args: string[]): CliArgs {
-  const result: CliArgs = {
-    transport: 'stdio',
-  };
+  const result: CliArgs = {};
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
-    if (arg === '--transport' || arg === '-t') {
-      const value = args[++i];
-      if (value === 'stdio' || value === 'http') {
-        result.transport = value;
-      }
-    } else if (arg === '--port' || arg === '-p') {
+    if (arg === '--port' || arg === '-p') {
       result.port = parseInt(args[++i], 10);
     } else if (arg === '--host' || arg === '-h') {
       result.host = args[++i];
@@ -650,24 +618,19 @@ function generateIndexFile() {
 import { createServer } from './server.js';
 import { loadConfig } from './config.js';
 import { parseArgs } from './cli.js';
-import { startStdioTransport, startHttpTransport } from './transport/index.js';
+import { startHttpTransport } from './transport/index.js';
 
 async function main(): Promise<void> {
   const config = loadConfig();
   const cliArgs = parseArgs(process.argv.slice(2));
 
   // CLI args override config
-  const transport = cliArgs.transport || config.transport;
   const port = cliArgs.port || config.port;
   const host = cliArgs.host || config.host;
 
   const server = createServer(config.name, config.version);
 
-  if (transport === 'http') {
-    await startHttpTransport(server, { ...config, port, host });
-  } else {
-    await startStdioTransport(server);
-  }
+  await startHttpTransport(server, { ...config, port, host });
 }
 
 main().catch((error) => {
@@ -690,17 +653,11 @@ pip install -e .
 
 ## Usage
 
-### STDIO Transport (default)
-
 \`\`\`bash
 python -m src.main
 \`\`\`
 
-### HTTP Transport
-
-\`\`\`bash
-MCP_TRANSPORT=http python -m src.main
-\`\`\`
+The server runs on HTTP transport (port 8080 by default).
 
 ## Tools
 
@@ -735,17 +692,11 @@ npm run build
 
 ## Usage
 
-### STDIO Transport (default)
-
 \`\`\`bash
 npm start
 \`\`\`
 
-### HTTP Transport
-
-\`\`\`bash
-MCP_TRANSPORT=http npm start
-\`\`\`
+The server runs on HTTP transport (port 8080 by default).
 
 ### Development
 
@@ -816,17 +767,14 @@ from .server import create_server
 
 
 def main() -> None:
-    """Run the MCP server."""
-    transport = os.getenv("MCP_TRANSPORT", "stdio")
+    """Run the MCP server on HTTP transport."""
+    port = int(os.getenv("MCP_PORT", "8080"))
+    host = os.getenv("MCP_HOST", "0.0.0.0")
 
     server = create_server()
 
-    if transport == "http":
-        # HTTP transport would be implemented here
-        raise NotImplementedError("HTTP transport not yet implemented")
-    else:
-        # STDIO transport
-        asyncio.run(server.run_stdio())
+    # HTTP transport - run on specified port
+    asyncio.run(server.run_http(host=host, port=port))
 
 
 if __name__ == "__main__":
@@ -954,9 +902,8 @@ class ServerConfig:
     """Server configuration."""
     name: str = "${serverName}"
     version: str = "${serverVersion}"
-    transport: str = "stdio"
-    port: int = 3000
-    host: str = "127.0.0.1"
+    port: int = 8080
+    host: str = "0.0.0.0"
     api_base_url: str = "${baseUrl}"
     api_key: str | None = None
 
@@ -966,9 +913,8 @@ def load_config() -> ServerConfig:
     return ServerConfig(
         name=os.getenv("MCP_SERVER_NAME", "${serverName}"),
         version=os.getenv("MCP_SERVER_VERSION", "${serverVersion}"),
-        transport=os.getenv("MCP_TRANSPORT", "stdio"),
-        port=int(os.getenv("MCP_PORT", "3000")),
-        host=os.getenv("MCP_HOST", "127.0.0.1"),
+        port=int(os.getenv("MCP_PORT", "8080")),
+        host=os.getenv("MCP_HOST", "0.0.0.0"),
         api_base_url=os.getenv("API_BASE_URL", "${baseUrl}"),
         api_key=os.getenv("API_KEY"),
     )

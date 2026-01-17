@@ -317,8 +317,8 @@ describe('generate_server_scaffold', () => {
       expect(filePaths).toContain('src/types.ts');
       expect(filePaths).toContain('src/config.ts');
       expect(filePaths).toContain('src/tools/index.ts');
-      expect(filePaths).toContain('src/transport/stdio.ts');
       expect(filePaths).toContain('src/transport/http.ts');
+      expect(filePaths).not.toContain('src/transport/stdio.ts');
       expect(filePaths).toContain('tests/unit/tools.test.ts');
     }
   });
